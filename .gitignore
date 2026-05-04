@@ -20,5 +20,3 @@ dist/
 *.log
 npm-debug.log*
 
-# Session files
-session-*.md
