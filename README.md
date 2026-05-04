@@ -1,1 +1,104 @@
-# opencode-agent-team
+# @anomalyco/agent-team
+
+OpenCode plugin that enables multi-agent team orchestration. Create teams of AI agents that collaborate on complex tasks with shared state, messaging, task tracking, and dependency management.
+
+## Installation
+
+```bash
+npm install @anomalyco/agent-team
+```
+
+Or add to your OpenCode config:
+
+```json
+{
+  "plugins": ["@anomalyco/agent-team"]
+}
+```
+
+## What It Does
+
+- **Team Management** — Create and shut down agent teams with a lead session and multiple teammate sessions
+- **Parallel Execution** — Spawn multiple independent teammates that work concurrently
+- **Messaging** — Teammates and leads can send messages, broadcasts, and status updates
+- **Task Tracking** — Create, assign, claim, and update shared tasks with dependency chains
+- **Plan Mode** — Teammates can operate in plan-only mode, submitting proposals for lead approval before implementation
+- **Session Integration** — Hooks into OpenCode's system prompt, compaction, and session lifecycle events
+
+## Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `team_create` | Create a new agent team for the current session |
+| `team_spawn` | Spawn a new teammate session (supports dependencies) |
+| `team_get_messages` | Read pending team mailbox messages |
+| `team_send_message` | Send a message to a specific teammate or the lead |
+| `team_broadcast` | Broadcast a message to all team members |
+| `team_shutdown` | Shut down the team and cancel active teammates |
+| `team_task_create` | Create a shared task with optional assignee and dependencies |
+| `team_task_list` | List all shared tasks and their statuses |
+| `team_task_claim` | Claim a pending task for the current teammate |
+| `team_task_update` | Update a task's status or assignee |
+| `team_plan_submit` | Submit a plan for lead approval (plan-mode teammates) |
+| `team_plan_decide` | Approve or reject a teammate's submitted plan (lead only) |
+
+## Usage
+
+Once installed, the lead session automatically gets team orchestration injected into its system prompt. The lead can then create a team and spawn teammates:
+
+```
+// Lead creates a team
+team_create("code-review", "Review the authentication module for security vulnerabilities")
+
+// Spawn teammates in parallel
+team_spawn("security-auditor", "explore", "Check auth.ts for SQL injection, XSS, and CSRF vulnerabilities")
+team_spawn("dependency-checker", "explore", "Audit package.json for known vulnerable dependencies")
+team_spawn("code-style", "explore", "Review auth.ts for code quality and best practices")
+
+// Check for teammate updates
+team_get_messages()
+
+// When done, shut down the team
+team_shutdown()
+```
+
+Teammates automatically receive their role prompt and team context. They proactively send progress, blocker, and completion messages to the lead.
+
+## Configuration
+
+No configuration required. State is stored in `~/.local/share/opencode/agent-team/teams.json`.
+
+## Gaps vs. Original Implementation
+
+This plugin ports the agent teams feature from the original OpenCode core implementation. Several gaps remain:
+
+### Needs Implementation (achievable within plugin API)
+
+| Gap | How to Address |
+|-----|----------------|
+| Plan mode tool enforcement | Hook `tool.execute.before` to block `bash`/`write`/`edit`/`apply_patch` for plan-mode sessions |
+| Result propagation | Call `client.session.messages()` on teammate completion to capture and relay final output to the lead |
+| Cascade auto-start | Use `client.session.prompt()` to launch unblocked dependents instead of just notifying the lead |
+| Permission inheritance | Pass `external_directory` and `deny` rules from lead via `session.create` options |
+| Feature flag (`experimental.agent_teams`) | Read project config and conditionally register tools |
+| Session cancel handler | Listen for `session.status` events with `"cancelled"` to trigger team shutdown |
+| Toast notifications | Use `client.tui.showToast()` for team lifecycle events |
+| Concurrent write safety | Switch JSON file persistence to SQLite or add file-level locking |
+
+### Plugin Architecture Limitations (cannot fix without core changes)
+
+| Gap | Reason |
+|-----|--------|
+| Custom TUI sidebar / dialog | Requires deep TUI API integration not fully exposed to plugins |
+| HTTP REST endpoints (`/team/*`) | Plugins cannot register server routes |
+| Internal bus events (`team.created`, `team.closed`, etc.) | The `Bus` system is not exposed to plugins |
+| Loop-level sync message injection | Original delivers messages at the start of each agent loop iteration; plugin messaging is asynchronous via `noReply: true` prompts |
+
+## Requirements
+
+- Node.js >= 20
+- OpenCode with plugin support (peer dependency: `@opencode-ai/plugin`)
+
+## License
+
+MIT
