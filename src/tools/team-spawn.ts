@@ -29,16 +29,39 @@ export function teamSpawnTool(client: any) {
       const team = await getActiveTeamForLead(sessionID)
       if (!team) throw new Error("No active team found. Create a team first with team_create.")
 
+      const planMode = params.plan_mode ?? false
       const dependencyIDs = params.depends_on || params.wait_for || null
 
       let childSession: any
       try {
-        childSession = await client.session.create({
-          body: {
-            title: `${params.name} (${params.agent_type})`,
-            parentID: sessionID,
-          },
-        })
+        const body: any = {
+          title: `${params.name} (${params.agent_type})`,
+          parentID: sessionID,
+        }
+
+        // Inherit permissions from lead session
+        try {
+          const leadSession = await client.session.get({ path: { id: sessionID } })
+          if (leadSession?.data?.permission) {
+            body.permission = leadSession.data.permission
+          }
+        } catch (_e) { /* ignore if unavailable */ }
+
+        // For plan-mode, deny write/execute tools
+        if (planMode) {
+          body.permission = {
+            ...(body.permission || {}),
+            deny: [
+              ...(body.permission?.deny || []),
+              { permission: "bash", action: "deny" },
+              { permission: "write", action: "deny" },
+              { permission: "edit", action: "deny" },
+              { permission: "apply_patch", action: "deny" },
+            ],
+          }
+        }
+
+        childSession = await client.session.create({ body })
       } catch (e) {
         throw new Error(`Failed to create child session: ${(e as Error).message}`)
       }
@@ -58,7 +81,6 @@ export function teamSpawnTool(client: any) {
         }
       }
 
-      const planMode = params.plan_mode ?? false
       const { memberID } = await addMember({
         teamID: team.id,
         sessionID: childSessionID,

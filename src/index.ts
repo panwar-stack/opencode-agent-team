@@ -24,6 +24,7 @@ import {
   isMemberBlocked,
   sendMessage,
   getTeamSummary,
+  shutdownTeam,
 } from "./team-service.js"
 import { deliverTeamMessages } from "./message-delivery.js"
 import { generateTeammateSystemPrompt } from "./system-prompt.js"
@@ -38,6 +39,18 @@ export const AgentTeamPlugin: Plugin = async ({ project, client, directory, $ })
   }
 
   log("info", "Agent team plugin initialized")
+
+  let teamEnabled = false
+  try {
+    const cfgResult = await client.config.get()
+    const cfg = cfgResult.data as any
+    teamEnabled = cfg?.experimental?.agent_teams === true
+  } catch { /* default to false */ }
+
+  if (!teamEnabled) {
+    log("info", "Agent teams not enabled (experimental.agent_teams). Returning minimal hooks.")
+    return {}
+  }
 
   return {
     tool: {
@@ -100,6 +113,18 @@ ${summary}
       }
     },
 
+    "tool.execute.before": async (input: any) => {
+      const sessionID = input.sessionID
+      const toolName = input.tool
+
+      const memberResult = await getMemberBySession(sessionID)
+      if (!memberResult) return
+
+      if (memberResult.member.planMode && ["bash", "write", "edit", "apply_patch"].includes(toolName)) {
+        throw new Error("This tool is not available in plan mode. Submit your plan to the lead for approval first.")
+      }
+    },
+
     "experimental.session.compacting": async (input: any, output: any) => {
       const sessionID = input.sessionID
 
@@ -137,18 +162,82 @@ ${summary}
       const team = memberResult.team
       const member = memberResult.member
 
-      if (status === "idle" && member.status === "active") {
-        await updateMemberStatus(member.id, "idle")
-      }
+      // Gap 6: Handle cancelled sessions
+      if (status === "cancelled") {
+        await updateMemberStatus(member.id, "cancelled", "Session cancelled")
 
-      if (status === "completed" || status === "done") {
-        await updateMemberStatus(member.id, "completed", "Session completed")
+        if (client.tui?.showToast) {
+          client.tui.showToast({ body: { variant: "warning", title: "Team", message: `Teammate ${member.name} was cancelled.` } })
+        }
 
         await sendMessage({
           teamID: team.id,
           sender: sessionID,
           recipients: [team.leadSessionID],
-          body: `Teammate **${member.name}** has completed their task.`,
+          body: `Teammate **${member.name}** has been cancelled.`,
+        })
+
+        try {
+          await client.session.prompt({
+            body: {
+              noReply: true,
+              parts: [{
+                type: "text",
+                text: `<team-messages>\nTeammate **${member.name}** has been cancelled.\n</team-messages>`,
+              }],
+            },
+            path: { id: team.leadSessionID },
+          })
+        } catch { /* ignore */ }
+
+        const allMembers = await getTeamMembers(team.id)
+        const nonLeadMembers = allMembers.filter(m => m.sessionID !== team.leadSessionID)
+        const allDone = nonLeadMembers.every(m => m.status === "completed" || m.status === "cancelled")
+        if (allDone && nonLeadMembers.length > 0) {
+          await shutdownTeam(team.id)
+          if (client.tui?.showToast) {
+            client.tui.showToast({ body: { variant: "info", title: "Team", message: `Team "${team.name}" shut down — all members finished.` } })
+          }
+        }
+
+        return
+      }
+
+      if (status === "idle" && member.status === "active") {
+        await updateMemberStatus(member.id, "idle")
+      }
+
+      if (status === "completed" || status === "done") {
+        // Gap 2: Result propagation — fetch completed session messages
+        let resultText = ""
+        try {
+          const msgs: any = await client.session.messages({ path: { id: sessionID } })
+          const messages = msgs?.data || msgs || []
+          if (Array.isArray(messages) && messages.length > 0) {
+            const lastMsg = messages[messages.length - 1]
+            if (lastMsg?.parts) {
+              resultText = lastMsg.parts
+                .filter((p: any) => p.type === "text")
+                .map((p: any) => p.text)
+                .join("\n")
+            } else if (lastMsg?.content) {
+              resultText = typeof lastMsg.content === "string" ? lastMsg.content : JSON.stringify(lastMsg.content)
+            }
+          }
+        } catch { /* ignore */ }
+
+        await updateMemberStatus(member.id, "completed", resultText || "Session completed")
+
+        // Gap 7: Toast for teammate completion
+        if (client.tui?.showToast) {
+          client.tui.showToast({ body: { variant: "success", title: "Team", message: `Teammate ${member.name} completed their task.` } })
+        }
+
+        await sendMessage({
+          teamID: team.id,
+          sender: sessionID,
+          recipients: [team.leadSessionID],
+          body: `Teammate **${member.name}** has completed their task.${resultText ? `\n\n**Result:**\n${resultText}` : ""}`,
         })
 
         try {
@@ -170,12 +259,31 @@ ${summary}
           if (!stillBlocked) {
             await updateMemberStatus(bm.id, "starting")
 
+            // Gap 7: Toast for unblocked member
+            if (client.tui?.showToast) {
+              client.tui.showToast({ body: { variant: "info", title: "Team", message: `Teammate ${bm.name} is now unblocked.` } })
+            }
+
             await sendMessage({
               teamID: team.id,
               sender: sessionID,
               recipients: [team.leadSessionID],
               body: `Teammate **${bm.name}** is now unblocked and ready. All their dependencies are completed.`,
             })
+
+            // Gap 3: Cascade auto-start
+            try {
+              await client.session.prompt({
+                body: {
+                  noReply: true,
+                  parts: [{
+                    type: "text",
+                    text: `<team-messages>\nYou are now unblocked! All your dependencies have completed. Begin working on your assigned task.\n</team-messages>`,
+                  }],
+                },
+                path: { id: bm.sessionID },
+              })
+            } catch { /* ignore */ }
           }
         }
       }
