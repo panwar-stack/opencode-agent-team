@@ -68,31 +68,47 @@ Teammates automatically receive their role prompt and team context. They proacti
 
 No configuration required. State is stored in `~/.local/share/opencode/agent-team/teams.json`.
 
-## Gaps vs. Original Implementation
+## Gaps vs. Built-in Agent Team Feature
 
-This plugin ports the agent teams feature from the original OpenCode core implementation. Several gaps remain:
+The built-in agent team feature in OpenCode (from `747bf9f`) has deeper integration than is possible through the plugin API. Below is a status summary:
 
-### Needs Implementation (achievable within plugin API)
+### Implemented in Plugin
 
-| Gap | How to Address |
-|-----|----------------|
-| Plan mode tool enforcement | Hook `tool.execute.before` to block `bash`/`write`/`edit`/`apply_patch` for plan-mode sessions |
-| Result propagation | Call `client.session.messages()` on teammate completion to capture and relay final output to the lead |
-| Cascade auto-start | Use `client.session.prompt()` to launch unblocked dependents instead of just notifying the lead |
-| Permission inheritance | Pass `external_directory` and `deny` rules from lead via `session.create` options |
-| Feature flag (`experimental.agent_teams`) | Read project config and conditionally register tools |
-| Session cancel handler | Listen for `session.status` events with `"cancelled"` to trigger team shutdown |
-| Toast notifications | Use `client.tui.showToast()` for team lifecycle events |
-| Concurrent write safety | Switch JSON file persistence to SQLite or add file-level locking |
+These features match the built-in implementation:
 
-### Plugin Architecture Limitations (cannot fix without core changes)
+| Feature | How It's Done |
+|---------|---------------|
+| Plan mode tool enforcement | `tool.execute.before` hook blocks `bash`/`write`/`edit`/`apply_patch` for plan-mode sessions |
+| Result propagation | `session.status` completed/done events capture final message via `client.session.messages()` and relay to lead |
+| Cascade auto-start | Unblocked dependent members are auto-started via `client.session.prompt()` |
+| Permission inheritance | `deny` rules and `external_directory` passed from lead via `client.session.create()` options |
+| Feature flag gating | Reads `client.config.get()` for `experimental.agent_teams` and conditionally registers tools |
+| Session cancel handler | `session.status` event listener handles "cancelled" → updates member, notifies lead, triggers shutdown if all done |
+| Toast notifications | `client.tui.showToast()` for team lifecycle events |
+| Concurrent write safety | Mutex-based write lock with 100ms in-memory cache |
+| Session compaction integration | `experimental.session.compacting` hook injects team context during compaction |
+| Lead system prompt injection | `experimental.chat.system.transform` hook adds orchestration guidance |
+| Teammate system prompt generation | Dynamic prompt includes name, team goal, role, plan mode, dependency results, and available tools |
+| Message delivery with anti-polling guard | Delivers `<team-messages>` blocks and blocks repeated empty `team_get_messages` calls |
 
-| Gap | Reason |
-|-----|--------|
-| Custom TUI sidebar / dialog | Requires deep TUI API integration not fully exposed to plugins |
-| HTTP REST endpoints (`/team/*`) | Plugins cannot register server routes |
-| Internal bus events (`team.created`, `team.closed`, etc.) | The `Bus` system is not exposed to plugins |
-| Loop-level sync message injection | Original delivers messages at the start of each agent loop iteration; plugin messaging is asynchronous via `noReply: true` prompts |
+### Gaps Remaining — Plugin API Limitations
+
+These require core changes to address:
+
+| Gap | Details | Reason |
+|-----|---------|--------|
+| TUI team panel dialog | Full dialog with 3 tabs: Overview (members, pending permissions, shutdown), Tasks, Messages | TUI dialog API not exposed to plugins |
+| TUI team sidebar | Sidebar with live member status dots, pending message counts, clickable member rows | Sidebar component API not exposed |
+| TUI subagent footer label | Child sessions show "Team Member" label in footer | Footer customization not available |
+| TUI keybinds for team nav | `<leader>v` toggle panel, `<leader>up` navigate to lead, `<leader>k` task list | Keybind registration not available |
+| TUI sync store | Real-time `team_member_status` map handling `team.member.updated` events | Sync store not extensible from plugins |
+| HTTP REST endpoints | `GET /team`, `GET /team/:teamID/messages`, `GET /team/:teamID/tasks`, `POST /team/shutdown` | Plugins cannot register server routes |
+| Internal bus events | `team.created`, `team.closed`, `team.member.updated`, `team.message.received` events consumed by TUI and other subsystems | `Bus` system not exposed to plugins |
+| SQLite persistence with migrations | Built-in uses SQLite + Drizzle ORM with 4 migrations; plugin uses JSON file | Plugins cannot register DB migrations |
+| Loop-level sync message injection | Built-in delivers messages at the start of each agent loop iteration | Plugin delivers via async `noReply: true` prompts |
+| Prompt guardrails against task takeover | Built-in lead system prompt explicitly prohibits taking over teammate tasks; plugin prompt is simpler | System prompt customizations are limited |
+| Detailed tool companion descriptions | Built-in tools have `.txt` companion files with richer descriptions and guardrails injected into the system prompt | Tool descriptions are inline only |
+| Continuous decomposition guidance | Built-in lead system prompt continuously encourages breaking remaining work into delegatable sub-tasks | System prompt customizations are limited |
 
 ## Requirements
 
