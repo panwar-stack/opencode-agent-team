@@ -1,5 +1,5 @@
 {
-  "name": "@anomalyco/agent-team",
+  "name": "@panwar-stack/agent-team",
   "version": "1.0.0",
   "description": "OpenCode plugin that enables multi-agent team orchestration",
   "type": "module",

@@ -1,18 +1,18 @@
-# @anomalyco/agent-team
+# @panwar-stack/agent-team
 
 OpenCode plugin that enables multi-agent team orchestration. Create teams of AI agents that collaborate on complex tasks with shared state, messaging, task tracking, and dependency management.
 
 ## Installation
 
 ```bash
-npm install @anomalyco/agent-team
+npm install @panwar-stack/agent-team
 ```
 
 Or add to your OpenCode config:
 
 ```json
 {
-  "plugins": ["@anomalyco/agent-team"]
+  "plugins": ["@panwar-stack/agent-team"]
 }
 ```
 
