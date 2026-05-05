@@ -19,6 +19,10 @@
     "@opencode-ai/plugin": ">=1.0.0"
   },
   "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
