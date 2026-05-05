@@ -89,7 +89,8 @@ These features match the built-in implementation:
 | Session compaction integration | `experimental.session.compacting` hook injects team context during compaction |
 | Lead system prompt injection | `experimental.chat.system.transform` hook adds orchestration guidance |
 | Teammate system prompt generation | Dynamic prompt includes name, team goal, role, plan mode, dependency results, and available tools |
-| Message delivery with anti-polling guard | Delivers `<team-messages>` blocks and blocks repeated empty `team_get_messages` calls |
+| Message delivery with anti-polling guard | Delivers `<team-messages>` blocks via async `noReply: true` prompts; blocks repeated empty `team_get_messages` calls |
+| Continuous decomposition guidance | Lead prompt includes: "Decompose continuously — as teammates return results, identify new sub-tasks and delegate those too" |
 
 ### Gaps Remaining — Plugin API Limitations
 
@@ -105,10 +106,9 @@ These require core changes to address:
 | HTTP REST endpoints | `GET /team`, `GET /team/:teamID/messages`, `GET /team/:teamID/tasks`, `POST /team/shutdown` | Plugins cannot register server routes |
 | Internal bus events | `team.created`, `team.closed`, `team.member.updated`, `team.message.received` events consumed by TUI and other subsystems | `Bus` system not exposed to plugins |
 | SQLite persistence with migrations | Built-in uses SQLite + Drizzle ORM with 4 migrations; plugin uses JSON file | Plugins cannot register DB migrations |
-| Loop-level sync message injection | Built-in delivers messages at the start of each agent loop iteration | Plugin delivers via async `noReply: true` prompts |
-| Prompt guardrails against task takeover | Built-in lead system prompt explicitly prohibits taking over teammate tasks; plugin prompt is simpler | System prompt customizations are limited |
+| Loop-level sync message injection | Built-in delivers messages at the start of each agent loop iteration; plugin delivers via async `noReply: true` prompts (robust but asynchronous) | Plugin API only provides async session.prompt |
+| Prompt guardrails against task takeover | Plugin prompt now includes "Delegate first, implement last" and "Trust teammate results — do not redo or duplicate their work"; built-in prompt is slightly more emphatic | System prompt customizations are limited |
 | Detailed tool companion descriptions | Built-in tools have `.txt` companion files with richer descriptions and guardrails injected into the system prompt | Tool descriptions are inline only |
-| Continuous decomposition guidance | Built-in lead system prompt continuously encourages breaking remaining work into delegatable sub-tasks | System prompt customizations are limited |
 
 ## Requirements
 
