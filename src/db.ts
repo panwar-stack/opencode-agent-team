@@ -44,7 +44,6 @@ async function _saveDB(db: DB): Promise<void> {
 
 async function loadDB(): Promise<DB> {
   return withLock(async () => {
-    if (_dbCache && (Date.now() - _dbCacheTime) < 100) return _dbCache
     _dbCache = await _loadDB()
     _dbCacheTime = Date.now()
     return _dbCache
@@ -66,7 +65,7 @@ async function getTeamState(teamID: TeamID): Promise<TeamState | null> {
 
 async function saveTeamState(state: TeamState): Promise<void> {
   return withLock(async () => {
-    const db = await _loadDB()
+    const db = _dbCache ?? await _loadDB()
     db.teams[state.team.id] = state
     await _saveDB(db)
     _dbCache = db

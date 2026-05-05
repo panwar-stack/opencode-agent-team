@@ -26,10 +26,18 @@ export function teamPlanDecideTool(client: any) {
         await setMemberPlanMode(member.id, false)
 
         try {
-          const leadSession = await client.session.get({ path: { id: sessionID } })
-          if (leadSession?.data?.permission) {
+          const memberSession = await client.session.get({ path: { id: member.sessionID } })
+          const currentPerms = memberSession?.data?.permission
+          if (Array.isArray(currentPerms)) {
+            const newPerms = currentPerms.filter(
+              (rule: any) => !(
+                rule.action === "deny" &&
+                rule.pattern === "*" &&
+                ["edit", "write", "bash", "apply_patch"].includes(rule.permission)
+              )
+            )
             await client.session.update({
-              body: { permission: leadSession.data.permission },
+              body: { permission: newPerms },
               path: { id: member.sessionID },
             })
           }

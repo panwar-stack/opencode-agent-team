@@ -30,7 +30,7 @@ export function teamBroadcastTool(client: any) {
       if (!teamID) throw new Error("No active team membership found")
 
       const members = await getTeamMembers(teamID)
-      const activeStatuses = ["starting", "blocked", "active", "idle", "completed"]
+      const activeStatuses = ["starting", "active", "idle"]
       const allRecipients = new Set<string>()
 
       if (leadSessionID && leadSessionID !== sessionID) {
@@ -60,7 +60,7 @@ export function teamBroadcastTool(client: any) {
               noReply: true,
               parts: [{
                 type: "text",
-                text: `<team-messages>\nYou have pending team mailbox messages. Use team_get_messages to read them.\n</team-messages>`,
+                text: `<team-messages>\n[Broadcast from ${sessionID}]\n${params.body}\n\nUse team_get_messages to read all pending messages.\n</team-messages>`,
               }],
             },
             path: { id: recipientID },

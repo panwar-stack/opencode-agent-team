@@ -53,26 +53,31 @@ export function teamSpawnTool(client: any) {
           agent: params.agent_type,
         }
 
-        // Inherit permissions from lead session
+        // Inherit permissions from lead session - upstream uses flat array
+        let permissions: any[] = []
         try {
           const leadSession = await client.session.get({ path: { id: sessionID } })
-          if (leadSession?.data?.permission) {
-            body.permission = leadSession.data.permission
+          const leadPerms = leadSession?.data?.permission
+          if (Array.isArray(leadPerms)) {
+            // Keep external_directory and existing deny rules
+            permissions = leadPerms.filter(
+              (rule: any) => rule.permission === "external_directory" || rule.action === "deny"
+            )
           }
         } catch (_e) { /* ignore if unavailable */ }
 
-        // For plan-mode, deny write/execute tools
+        // For plan-mode, deny write/execute tools (flat array format like upstream)
         if (planMode) {
-          body.permission = {
-            ...(body.permission || {}),
-            deny: [
-              ...(body.permission?.deny || []),
-              { ruleset: "*", permission: "bash", action: "deny" },
-              { ruleset: "*", permission: "write", action: "deny" },
-              { ruleset: "*", permission: "edit", action: "deny" },
-              { ruleset: "*", permission: "apply_patch", action: "deny" },
-            ],
-          }
+          permissions.push(
+            { permission: "bash", pattern: "*", action: "deny" },
+            { permission: "write", pattern: "*", action: "deny" },
+            { permission: "edit", pattern: "*", action: "deny" },
+            { permission: "apply_patch", pattern: "*", action: "deny" },
+          )
+        }
+
+        if (permissions.length > 0) {
+          body.permission = permissions
         }
 
         childSession = await client.session.create({ body })
@@ -136,34 +141,27 @@ export function teamSpawnTool(client: any) {
         })
       }
 
-      try {
-        await client.session.prompt({
-          body: {
-            noReply: true,
-            parts: [{ type: "text", text: `<system>\n${systemPrompt}\n</system>` }],
-          },
-          path: { id: childSessionID },
-        })
+      // Mark active immediately - teammate runs asynchronously in background
+      const { updateMemberStatus: us } = await import("../team-service.js")
+      await us(memberID, "active")
 
-        await client.session.prompt({
-          body: {
-            parts: [{
-              type: "text",
-              text: params.role_prompt,
-            }],
-            tools: {
-              task: false,
-              todowrite: true,
-            },
+      // Fire-and-forget: combine system and role prompt into a single prompt call
+      client.session.prompt({
+        body: {
+          parts: [
+            { type: "text", text: `<system>\n${systemPrompt}\n</system>` },
+            { type: "text", text: params.role_prompt },
+          ],
+          tools: {
+            task: false,
+            todowrite: true,
           },
-          path: { id: childSessionID },
-        })
-      } catch (e) {
-        await (await import("../team-service.js")).updateMemberStatus(memberID, "cancelled", (e as Error).message)
-        throw new Error(`Failed to start teammate: ${(e as Error).message}`)
-      }
-
-      await (await import("../team-service.js")).updateMemberStatus(memberID, "active")
+        },
+        path: { id: childSessionID },
+      }).catch(async (e: Error) => {
+        const { updateMemberStatus: us2 } = await import("../team-service.js")
+        await us2(memberID, "cancelled", `Failed to start teammate: ${e.message}`)
+      })
 
       return JSON.stringify({
         memberID,

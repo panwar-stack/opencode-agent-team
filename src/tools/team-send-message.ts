@@ -49,7 +49,7 @@ export function teamSendMessageTool(client: any) {
               noReply: true,
               parts: [{
                 type: "text",
-                text: `<team-messages>\nYou have pending team mailbox messages. As the recipient, use team_get_messages to read them.\n</team-messages>`,
+                text: `<team-messages>\nFrom ${sessionID}:\n${params.body}\n\nUse team_get_messages to read all pending messages.\n</team-messages>`,
               }],
             },
             path: { id: recipientID },

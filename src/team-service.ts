@@ -37,7 +37,8 @@ export async function getActiveTeamForLead(leadSessionID: string): Promise<Team 
 
 export async function getTeamForMember(sessionID: string): Promise<Team | null> {
   const state = await getTeamByMemberSession(sessionID)
-  return state?.team ?? null
+  if (!state || state.team.status !== "active") return null
+  return state.team
 }
 
 export async function shutdownTeam(teamID: TeamID): Promise<void> {
@@ -110,6 +111,7 @@ export async function getMember(memberID: MemberID): Promise<TeamMember | null> 
 export async function getMemberBySession(sessionID: string): Promise<{ member: TeamMember; team: Team } | null> {
   const db = await loadDB()
   for (const state of Object.values(db.teams)) {
+    if (state.team.status !== "active") continue
     const member = state.members.find(m => m.sessionID === sessionID)
     if (member) return { member, team: state.team }
   }
@@ -144,7 +146,7 @@ export async function isMemberBlocked(member: TeamMember): Promise<boolean> {
     if (!depMember) {
       throw new Error(`Unknown dependency "${depID}" for member ${member.name}`)
     }
-    if (depMember.status !== "completed" && depMember.status !== "cancelled") {
+    if (depMember.status !== "completed") {
       return true
     }
   }

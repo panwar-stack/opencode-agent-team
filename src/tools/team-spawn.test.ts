@@ -77,7 +77,7 @@ describe("teamSpawnTool", () => {
 
     expect(client.session.create).toHaveBeenCalled()
     expect(mockAddMember).toHaveBeenCalled()
-    expect(client.session.prompt).toHaveBeenCalledTimes(2)
+    expect(client.session.prompt).toHaveBeenCalledTimes(1)
 
     const parsed = JSON.parse(result)
     expect(parsed).toEqual({
@@ -131,12 +131,12 @@ describe("teamSpawnTool", () => {
     )
 
     const createCallArgs = (client.session.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(createCallArgs.body.permission.deny).toEqual(
+    expect(createCallArgs.body.permission).toEqual(
       expect.arrayContaining([
-        { ruleset: "*", permission: "bash", action: "deny" },
-        { ruleset: "*", permission: "write", action: "deny" },
-        { ruleset: "*", permission: "edit", action: "deny" },
-        { ruleset: "*", permission: "apply_patch", action: "deny" },
+        { pattern: "*", permission: "bash", action: "deny" },
+        { pattern: "*", permission: "write", action: "deny" },
+        { pattern: "*", permission: "edit", action: "deny" },
+        { pattern: "*", permission: "apply_patch", action: "deny" },
       ]),
     )
   })
@@ -161,6 +161,11 @@ describe("teamSpawnTool", () => {
     mockIsMemberBlocked.mockResolvedValue(false)
     mockGetTeamState.mockResolvedValue({ members: [{ id: "member-4", name: "perm-agent", sessionID: "child-session-4", dependencyIDs: null, status: "starting", planMode: false }] })
 
+    // Override the default get mock to return array-format permissions
+    client.session.get = vi.fn().mockResolvedValue({
+      data: { permission: [{ permission: "external_directory", pattern: "/tmp", action: "allow" }] }
+    })
+
     const toolDef = teamSpawnTool(client)
     await toolDef.execute(
       { name: "perm-agent", agent_type: "general", role_prompt: "Do work" },
@@ -168,7 +173,7 @@ describe("teamSpawnTool", () => {
     )
 
     const createCallArgs = (client.session.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
-    expect(createCallArgs.body.permission).toEqual({ external_directory: ["/tmp"] })
+    expect(createCallArgs.body.permission).toEqual([{ permission: "external_directory", pattern: "/tmp", action: "allow" }])
   })
 
   it("uses wait_for as alias for depends_on", async () => {

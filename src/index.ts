@@ -13,7 +13,6 @@ import { teamTaskUpdateTool } from "./tools/team-task-update.js"
 import { teamPlanSubmitTool } from "./tools/team-plan-submit.js"
 import { teamPlanDecideTool } from "./tools/team-plan-decide.js"
 
-import type { TeamEvent } from "./types.js"
 import {
   getActiveTeamForLead,
   getTeamForMember,
@@ -24,7 +23,6 @@ import {
   isMemberBlocked,
   sendMessage,
   getTeamSummary,
-  shutdownTeam,
 } from "./team-service.js"
 import { deliverTeamMessages } from "./message-delivery.js"
 import { generateTeammateSystemPrompt } from "./system-prompt.js"
@@ -152,9 +150,9 @@ ${summary}
     event: async ({ event }: { event: any }) => {
       if (event.type !== "session.status") return
 
-      const sessionID = event.properties?.session?.id
-      const status = event.properties?.status
-      if (!sessionID || !status) return
+      const sessionID = event.properties?.sessionID
+      const statusType = event.properties?.status?.type
+      if (!sessionID || !statusType) return
 
       const memberResult = await getMemberBySession(sessionID)
       if (!memberResult) return
@@ -162,53 +160,8 @@ ${summary}
       const team = memberResult.team
       const member = memberResult.member
 
-      // Gap 6: Handle cancelled sessions
-      if (status === "cancelled") {
-        await updateMemberStatus(member.id, "cancelled", "Session cancelled")
-
-        if (client.tui?.showToast) {
-          client.tui.showToast({ body: { variant: "warning", title: "Team", message: `Teammate ${member.name} was cancelled.` } })
-        }
-
-        await sendMessage({
-          teamID: team.id,
-          sender: sessionID,
-          recipients: [team.leadSessionID],
-          body: `Teammate **${member.name}** has been cancelled.`,
-        })
-
-        try {
-          await client.session.prompt({
-            body: {
-              noReply: true,
-              parts: [{
-                type: "text",
-                text: `<team-messages>\nTeammate **${member.name}** has been cancelled.\n</team-messages>`,
-              }],
-            },
-            path: { id: team.leadSessionID },
-          })
-        } catch { /* ignore */ }
-
-        const allMembers = await getTeamMembers(team.id)
-        const nonLeadMembers = allMembers.filter(m => m.sessionID !== team.leadSessionID)
-        const allDone = nonLeadMembers.every(m => m.status === "completed" || m.status === "cancelled")
-        if (allDone && nonLeadMembers.length > 0) {
-          await shutdownTeam(team.id)
-          if (client.tui?.showToast) {
-            client.tui.showToast({ body: { variant: "info", title: "Team", message: `Team "${team.name}" shut down — all members finished.` } })
-          }
-        }
-
-        return
-      }
-
-      if (status === "idle" && member.status === "active") {
-        await updateMemberStatus(member.id, "idle")
-      }
-
-      if (status === "completed" || status === "done") {
-        // Gap 2: Result propagation — fetch completed session messages
+      // Handle idle (session finished work)
+      if (statusType === "idle" && member.status === "active") {
         let resultText = ""
         try {
           const msgs: any = await client.session.messages({ path: { id: sessionID } })
@@ -228,7 +181,6 @@ ${summary}
 
         await updateMemberStatus(member.id, "completed", resultText || "Session completed")
 
-        // Gap 7: Toast for teammate completion
         if (client.tui?.showToast) {
           client.tui.showToast({ body: { variant: "success", title: "Team", message: `Teammate ${member.name} completed their task.` } })
         }
@@ -253,6 +205,7 @@ ${summary}
           })
         } catch { /* ignore */ }
 
+        // Auto-start blocked members
         const blockedMembers = await getBlockedMembers(team.id)
         for (const bm of blockedMembers) {
           const stillBlocked = await isMemberBlocked(bm)
@@ -270,11 +223,11 @@ ${summary}
               body: `Teammate **${bm.name}** is now unblocked and ready. All their dependencies are completed.`,
             })
 
-            const allMembersForDepResults = await getTeamMembers(team.id)
+            const allMembers = await getTeamMembers(team.id)
             const depResults: string[] = []
             if (bm.dependencyIDs) {
               for (const depID of bm.dependencyIDs) {
-                const depMember = allMembersForDepResults.find(m => m.sessionID === depID || m.name === depID || m.id === depID)
+                const depMember = allMembers.find(m => m.sessionID === depID || m.name === depID || m.id === depID)
                 if (depMember && depMember.status === "completed" && depMember.result) {
                   depResults.push(`**${depMember.name}** completed: ${depMember.result}`)
                 }
@@ -320,6 +273,11 @@ ${summary}
             await updateMemberStatus(bm.id, "active")
           }
         }
+      }
+
+      // Handle busy (member is working)
+      if (statusType === "busy" && (member.status === "starting" || member.status === "idle" || member.status === "blocked")) {
+        await updateMemberStatus(member.id, "active")
       }
     },
   }

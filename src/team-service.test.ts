@@ -684,7 +684,7 @@ describe("isMemberBlocked", () => {
 
     const member = makeMember({ teamID, dependencyIDs: [depID] })
     const blocked = await isMemberBlocked(member)
-    expect(blocked).toBe(false)
+    expect(blocked).toBe(true)
   })
 
   it("returns true when a dependency is still active", async () => {

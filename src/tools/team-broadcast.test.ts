@@ -81,14 +81,13 @@ describe("teamBroadcastTool", () => {
 
     const parsed = JSON.parse(result)
     expect(parsed.messageID).toBe("broadcast-1")
-    expect(parsed.recipientCount).toBe(3)
+    expect(parsed.recipientCount).toBe(2)
 
     const sendCall = mockSendMessage.mock.calls[0][0]
     expect(sendCall.body).toBe("Important update")
     expect(sendCall.sender).toBe("member-session-1")
     expect(sendCall.recipients).toContain("lead-1")
     expect(sendCall.recipients).toContain("agent-2")
-    expect(sendCall.recipients).toContain("agent-3")
     expect(sendCall.recipients).not.toContain("member-session-1")
   })
 
