@@ -82,7 +82,7 @@ These features match the built-in implementation:
 | Result propagation | `session.status` completed/done events capture final message via `client.session.messages()` and relay to lead |
 | Cascade auto-start | Unblocked dependent members are auto-started via `client.session.prompt()` |
 | Permission inheritance | `deny` rules and `external_directory` passed from lead via `client.session.create()` options |
-| Feature flag gating | Reads `client.config.get()` for `experimental.agent_teams` and conditionally registers tools |
+| Feature flag gating | Uses the plugin `config` hook for `experimental.agent_teams` and conditionally registers tools without startup client calls |
 | Session cancel handler | `session.status` event listener handles "cancelled" → updates member, notifies lead, triggers shutdown if all done |
 | Toast notifications | `client.tui.showToast()` for team lifecycle events |
 | Concurrent write safety | Mutex-based write lock with 100ms in-memory cache |

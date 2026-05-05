@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Config, Hooks, Plugin } from "@opencode-ai/plugin"
 
 import { teamCreateTool } from "./tools/team-create.js"
 import { teamSpawnTool } from "./tools/team-spawn.js"
@@ -24,7 +24,6 @@ import {
   sendMessage,
   getTeamSummary,
 } from "./team-service.js"
-import { deliverTeamMessages } from "./message-delivery.js"
 import { generateTeammateSystemPrompt } from "./system-prompt.js"
 
 export const AgentTeamPlugin: Plugin = async ({ project, client, directory, $ }) => {
@@ -38,35 +37,38 @@ export const AgentTeamPlugin: Plugin = async ({ project, client, directory, $ })
 
   log("info", "Agent team plugin initialized")
 
-  let teamEnabled = false
-  try {
-    const cfgResult = await client.config.get()
-    const cfg = cfgResult.data as any
-    teamEnabled = cfg?.experimental?.agent_teams === true
-  } catch { /* default to false */ }
+  let disposed = false
 
-  if (!teamEnabled) {
-    log("info", "Agent teams not enabled (experimental.agent_teams). Returning minimal hooks.")
-    return {}
+  let teamEnabled = false
+  const teamTools = {
+    team_create: teamCreateTool(client),
+    team_spawn: teamSpawnTool(client),
+    team_get_messages: teamGetMessagesTool(client),
+    team_send_message: teamSendMessageTool(client),
+    team_broadcast: teamBroadcastTool(client),
+    team_shutdown: teamShutdownTool(client),
+    team_task_create: teamTaskCreateTool(client),
+    team_task_list: teamTaskListTool(client),
+    team_task_claim: teamTaskClaimTool(client),
+    team_task_update: teamTaskUpdateTool(client),
+    team_plan_submit: teamPlanSubmitTool(client),
+    team_plan_decide: teamPlanDecideTool(client),
   }
 
-  return {
-    tool: {
-      team_create: teamCreateTool(client),
-      team_spawn: teamSpawnTool(client),
-      team_get_messages: teamGetMessagesTool(client),
-      team_send_message: teamSendMessageTool(client),
-      team_broadcast: teamBroadcastTool(client),
-      team_shutdown: teamShutdownTool(client),
-      team_task_create: teamTaskCreateTool(client),
-      team_task_list: teamTaskListTool(client),
-      team_task_claim: teamTaskClaimTool(client),
-      team_task_update: teamTaskUpdateTool(client),
-      team_plan_submit: teamPlanSubmitTool(client),
-      team_plan_decide: teamPlanDecideTool(client),
+  const hooks: Hooks = {
+    config: async (cfg: Config) => {
+      teamEnabled = (cfg as any)?.experimental?.agent_teams === true
+      if (teamEnabled) {
+        hooks.tool = teamTools
+        log("info", "Agent teams enabled by experimental.agent_teams.")
+      } else {
+        delete hooks.tool
+        log("info", "Agent teams not enabled (experimental.agent_teams). Team hooks are inert.")
+      }
     },
 
     "experimental.chat.system.transform": async (input: any, output: any) => {
+      if (!teamEnabled) return
       const sessionID = input.sessionID
 
       const isTeammate = !!(await getTeamForMember(sessionID))
@@ -112,6 +114,7 @@ ${summary}
     },
 
     "tool.execute.before": async (input: any) => {
+      if (!teamEnabled) return
       const sessionID = input.sessionID
       const toolName = input.tool
 
@@ -124,6 +127,7 @@ ${summary}
     },
 
     "experimental.session.compacting": async (input: any, output: any) => {
+      if (!teamEnabled) return
       const sessionID = input.sessionID
 
       const memberResult = await getMemberBySession(sessionID)
@@ -148,130 +152,138 @@ ${summary}
     },
 
     event: async ({ event }: { event: any }) => {
+      if (!teamEnabled) return
+      if (disposed) return
       if (event.type !== "session.status") return
 
-      const sessionID = event.properties?.sessionID
-      const statusType = event.properties?.status?.type
-      if (!sessionID || !statusType) return
+      try {
+        const sessionID = event.properties?.sessionID
+        const statusType = event.properties?.status?.type
+        if (!sessionID || !statusType) return
 
-      const memberResult = await getMemberBySession(sessionID)
-      if (!memberResult) return
+        const memberResult = await getMemberBySession(sessionID)
+        if (!memberResult) return
 
-      const team = memberResult.team
-      const member = memberResult.member
+        const team = memberResult.team
+        const member = memberResult.member
 
-      // Handle idle (session finished work)
-      if (statusType === "idle" && member.status === "active" && !member.planMode) {
-        let resultText = ""
-        try {
-          const msgs: any = await client.session.messages({ path: { id: sessionID } })
-          const messages = msgs?.data || msgs || []
-          if (Array.isArray(messages) && messages.length > 0) {
-            const lastMsg = messages[messages.length - 1]
-            if (lastMsg?.parts) {
-              resultText = lastMsg.parts
-                .filter((p: any) => p.type === "text")
-                .map((p: any) => p.text)
-                .join("\n")
-            } else if (lastMsg?.content) {
-              resultText = typeof lastMsg.content === "string" ? lastMsg.content : JSON.stringify(lastMsg.content)
-            }
-          }
-        } catch { /* ignore */ }
-
-        await updateMemberStatus(member.id, "completed", resultText || "Session completed")
-
-        if (client.tui?.showToast) {
-          client.tui.showToast({ body: { variant: "success", title: "Team", message: `Teammate ${member.name} completed their task.` } })
-        }
-
-        await sendMessage({
-          teamID: team.id,
-          sender: sessionID,
-          recipients: [team.leadSessionID],
-          body: `Teammate **${member.name}** has completed their task.${resultText ? `\n\n**Result:**\n${resultText}` : ""}`,
-        })
-
-        try {
-          await client.session.prompt({
-            body: {
-              parts: [{
-                type: "text",
-                text: `<team-messages>\nTeammate **${member.name}** has completed their work. Check their output and decide next steps.\n</team-messages>`,
-              }],
-            },
-            path: { id: team.leadSessionID },
-          })
-        } catch { /* ignore */ }
-
-        // Auto-start blocked members
-        const blockedMembers = await getBlockedMembers(team.id)
-        for (const bm of blockedMembers) {
-          const stillBlocked = await isMemberBlocked(bm)
-          if (!stillBlocked) {
-            await updateMemberStatus(bm.id, "starting")
-
-            if (client.tui?.showToast) {
-              client.tui.showToast({ body: { variant: "info", title: "Team", message: `Teammate ${bm.name} is now unblocked.` } })
-            }
-
-            await sendMessage({
-              teamID: team.id,
-              sender: sessionID,
-              recipients: [team.leadSessionID],
-              body: `Teammate **${bm.name}** is now unblocked and ready. All their dependencies are completed.`,
-            })
-
-            const allMembers = await getTeamMembers(team.id)
-            const depResults: string[] = []
-            if (bm.dependencyIDs) {
-              for (const depID of bm.dependencyIDs) {
-                const depMember = allMembers.find(m => m.sessionID === depID || m.name === depID || m.id === depID)
-                if (depMember && depMember.status === "completed" && depMember.result) {
-                  depResults.push(`**${depMember.name}** completed: ${depMember.result}`)
-                }
+        // Handle idle (session finished work)
+        if (statusType === "idle" && member.status === "active" && !member.planMode) {
+          let resultText = ""
+          try {
+            const msgs: any = await client.session.messages({ path: { id: sessionID } })
+            const messages = msgs?.data || msgs || []
+            if (Array.isArray(messages) && messages.length > 0) {
+              const lastMsg = messages[messages.length - 1]
+              if (lastMsg?.parts) {
+                resultText = lastMsg.parts
+                  .filter((p: any) => p.type === "text")
+                  .map((p: any) => p.text)
+                  .join("\n")
+              } else if (lastMsg?.content) {
+                resultText = typeof lastMsg.content === "string" ? lastMsg.content : JSON.stringify(lastMsg.content)
               }
             }
+          } catch { /* ignore */ }
 
-            const systemPrompt = generateTeammateSystemPrompt({
-              name: bm.name,
-              teamName: team.name,
-              teamGoal: team.goal,
-              leadSessionID: team.leadSessionID,
-              memberSessionID: bm.sessionID,
-              teamID: team.id,
-              rolePrompt: bm.rolePrompt,
-              planMode: bm.planMode,
-              dependencyResults: depResults.length > 0 ? depResults : undefined,
+          await updateMemberStatus(member.id, "completed", resultText || "Session completed")
+
+          if (client.tui?.showToast) {
+            client.tui.showToast({ body: { variant: "success", title: "Team", message: `Teammate ${member.name} completed their task.` } })
+          }
+
+          await sendMessage({
+            teamID: team.id,
+            sender: sessionID,
+            recipients: [team.leadSessionID],
+            body: `Teammate **${member.name}** has completed their task.${resultText ? `\n\n**Result:**\n${resultText}` : ""}`,
+          })
+
+          try {
+            await client.session.prompt({
+              body: {
+                parts: [{
+                  type: "text",
+                  text: `<team-messages>\nTeammate **${member.name}** has completed their work. Check their output and decide next steps.\n</team-messages>`,
+                }],
+              },
+              path: { id: team.leadSessionID },
             })
+          } catch { /* ignore */ }
 
-            try {
-              await client.session.prompt({
-                body: {
-                  parts: [
-                    { type: "text", text: `<system>\n${systemPrompt}\n</system>` },
-                    { type: "text", text: bm.rolePrompt },
-                  ],
-                  tools: {
-                    task: false,
-                    todowrite: true,
-                  },
-                },
-                path: { id: bm.sessionID },
+          // Auto-start blocked members
+          const blockedMembers = await getBlockedMembers(team.id)
+          for (const bm of blockedMembers) {
+            const stillBlocked = await isMemberBlocked(bm)
+            if (!stillBlocked) {
+              await updateMemberStatus(bm.id, "starting")
+
+              if (client.tui?.showToast) {
+                client.tui.showToast({ body: { variant: "info", title: "Team", message: `Teammate ${bm.name} is now unblocked.` } })
+              }
+
+              await sendMessage({
+                teamID: team.id,
+                sender: sessionID,
+                recipients: [team.leadSessionID],
+                body: `Teammate **${bm.name}** is now unblocked and ready. All their dependencies are completed.`,
               })
-            } catch { /* ignore */ }
 
-            await updateMemberStatus(bm.id, "active")
+              const allMembers = await getTeamMembers(team.id)
+              const depResults: string[] = []
+              if (bm.dependencyIDs) {
+                for (const depID of bm.dependencyIDs) {
+                  const depMember = allMembers.find(m => m.sessionID === depID || m.name === depID || m.id === depID)
+                  if (depMember && depMember.status === "completed" && depMember.result) {
+                    depResults.push(`**${depMember.name}** completed: ${depMember.result}`)
+                  }
+                }
+              }
+
+              const systemPrompt = generateTeammateSystemPrompt({
+                name: bm.name,
+                teamName: team.name,
+                teamGoal: team.goal,
+                leadSessionID: team.leadSessionID,
+                memberSessionID: bm.sessionID,
+                teamID: team.id,
+                rolePrompt: bm.rolePrompt,
+                planMode: bm.planMode,
+                dependencyResults: depResults.length > 0 ? depResults : undefined,
+              })
+
+              try {
+                await client.session.prompt({
+                  body: {
+                    parts: [
+                      { type: "text", text: `<system>\n${systemPrompt}\n</system>` },
+                      { type: "text", text: bm.rolePrompt },
+                    ],
+                    tools: {
+                      task: false,
+                      todowrite: true,
+                    },
+                  },
+                  path: { id: bm.sessionID },
+                })
+              } catch { /* ignore */ }
+
+              await updateMemberStatus(bm.id, "active")
+            }
           }
         }
-      }
 
-      // Handle busy (member is working)
-      if (statusType === "busy" && (member.status === "starting" || member.status === "idle" || member.status === "blocked")) {
-        await updateMemberStatus(member.id, "active")
+        // Handle busy (member is working)
+        if (statusType === "busy" && (member.status === "starting" || member.status === "idle" || member.status === "blocked")) {
+          await updateMemberStatus(member.id, "active")
+        }
+      } catch (e) {
+        log("error", `Event handler error: ${(e as Error).message}`)
       }
     },
   }
+
+  return hooks
 }
 
 export default AgentTeamPlugin

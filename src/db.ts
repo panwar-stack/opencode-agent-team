@@ -6,12 +6,18 @@ import type { Team, TeamMember, TeamTask, TeamMessage, TeamID } from "./types.js
 const DATA_DIR = join(homedir(), ".local", "share", "opencode", "agent-team")
 const TEAMS_FILE = join(DATA_DIR, "teams.json")
 
-let mutex = Promise.resolve()
+let mutex: Promise<void> = Promise.resolve()
 
-function withLock<T>(fn: () => Promise<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    mutex = mutex.then(() => fn().then(resolve, reject))
-  })
+async function withLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = mutex
+  let release: () => void
+  mutex = new Promise<void>(resolve => { release = resolve })
+  await prev
+  try {
+    return await fn()
+  } finally {
+    release!()
+  }
 }
 
 let _dbCache: DB | null = null

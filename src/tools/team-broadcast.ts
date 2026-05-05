@@ -57,6 +57,7 @@ export function teamBroadcastTool(client: any) {
         try {
           await client.session.prompt({
             body: {
+              noReply: true,
               parts: [{
                 type: "text",
                 text: `<team-messages>\n[Broadcast from ${sessionID}]\n${params.body}\n\nUse team_get_messages to read all pending messages.\n</team-messages>`,

@@ -28,6 +28,7 @@ export function teamPlanSubmitTool(client: any) {
       try {
         await client.session.prompt({
           body: {
+            noReply: true,
             parts: [{
               type: "text",
               text: `<team-messages>\nA teammate (${memberInfo.member.name}) has submitted a plan for your review. Use team_plan_decide to approve or reject it.\n</team-messages>`,

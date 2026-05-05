@@ -46,6 +46,7 @@ export function teamSendMessageTool(client: any) {
         try {
           await client.session.prompt({
             body: {
+              noReply: true,
               parts: [{
                 type: "text",
                 text: `<team-messages>\nFrom ${sessionID}:\n${params.body}\n\nUse team_get_messages to read all pending messages.\n</team-messages>`,
