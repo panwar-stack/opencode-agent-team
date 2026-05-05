@@ -1,12 +1,14 @@
 const mockGetActiveTeamForLead = vi.fn()
 const mockGetTeamMembers = vi.fn()
 const mockUpdateMemberStatus = vi.fn()
+const mockSetMemberPlanMode = vi.fn()
 const mockSendMessage = vi.fn()
 
 vi.mock("../team-service.js", () => ({
   getActiveTeamForLead: mockGetActiveTeamForLead,
   getTeamMembers: mockGetTeamMembers,
   updateMemberStatus: mockUpdateMemberStatus,
+  setMemberPlanMode: mockSetMemberPlanMode,
   sendMessage: mockSendMessage,
 }))
 
@@ -17,7 +19,8 @@ function createMockClient() {
     session: {
       prompt: vi.fn().mockResolvedValue({}),
       create: vi.fn().mockResolvedValue({}),
-      get: vi.fn().mockResolvedValue({}),
+      get: vi.fn().mockResolvedValue({ data: { permission: {} } }),
+      update: vi.fn().mockResolvedValue({}),
       delete: vi.fn().mockResolvedValue({}),
       messages: vi.fn().mockResolvedValue({}),
     },
@@ -80,6 +83,7 @@ describe("teamPlanDecideTool", () => {
 
     expect(result).toBe("Plan from agent-1 approved. Teammate notified.")
     expect(mockUpdateMemberStatus).toHaveBeenCalledWith("m1", "active")
+    expect(mockSetMemberPlanMode).toHaveBeenCalledWith("m1", false)
 
     expect(mockSendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -116,6 +120,7 @@ describe("teamPlanDecideTool", () => {
 
     expect(result).toBe("Plan from agent-1 rejected. Feedback sent.")
     expect(mockUpdateMemberStatus).not.toHaveBeenCalled()
+    expect(mockSetMemberPlanMode).not.toHaveBeenCalled()
 
     expect(mockSendMessage).toHaveBeenCalledWith(
       expect.objectContaining({

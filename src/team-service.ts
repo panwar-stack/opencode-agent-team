@@ -141,11 +141,28 @@ export async function isMemberBlocked(member: TeamMember): Promise<boolean> {
     const depMember = state.members.find(m =>
       m.id === depID || m.sessionID === depID || m.name === depID
     )
-    if (depMember && depMember.status !== "completed" && depMember.status !== "cancelled") {
+    if (!depMember) {
+      throw new Error(`Unknown dependency "${depID}" for member ${member.name}`)
+    }
+    if (depMember.status !== "completed" && depMember.status !== "cancelled") {
       return true
     }
   }
   return false
+}
+
+export async function setMemberPlanMode(memberID: MemberID, planMode: boolean): Promise<{ member: TeamMember; team: Team } | null> {
+  const db = await loadDB()
+  for (const state of Object.values(db.teams)) {
+    const member = state.members.find(m => m.id === memberID)
+    if (member) {
+      member.planMode = planMode
+      member.timeUpdated = Date.now()
+      await saveTeamState(state)
+      return { member, team: state.team }
+    }
+  }
+  return null
 }
 
 export async function getBlockedMembers(teamID: TeamID): Promise<TeamMember[]> {
@@ -291,6 +308,7 @@ export async function updateTask(taskID: TaskID, updates: { status?: "pending" |
 
 export function resolveRecipients(recipient: string, members: TeamMember[], senderSessionID: string, leadSessionID: string): string[] {
   const resolved: Set<string> = new Set()
+  const unknown: string[] = []
 
   const parts = recipient.split(",").map(p => p.trim()).filter(Boolean)
 
@@ -302,9 +320,13 @@ export function resolveRecipients(recipient: string, members: TeamMember[], send
       if (member) {
         resolved.add(member.sessionID)
       } else {
-        resolved.add(part)
+        unknown.push(part)
       }
     }
+  }
+
+  if (unknown.length > 0) {
+    throw new Error(`Unknown recipient(s): ${unknown.join(", ")}. Recipients must be a member name, session ID, or "lead".`)
   }
 
   resolved.delete(senderSessionID)

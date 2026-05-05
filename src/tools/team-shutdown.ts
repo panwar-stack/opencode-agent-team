@@ -11,16 +11,18 @@ export function teamShutdownTool(client: any) {
       const team = await getActiveTeamForLead(sessionID)
       if (!team) throw new Error("No active team found for this session")
 
+      const members = await getTeamMembers(team.id)
+      const activeSessionIDs = members
+        .filter(m => m.status !== "completed" && m.status !== "cancelled")
+        .map(m => m.sessionID)
+
       await shutdownTeam(team.id)
 
-      const members = await getTeamMembers(team.id)
-      for (const m of members) {
-        if (m.status !== "completed" && m.status !== "cancelled") {
-          try {
-            await client.session.delete({ path: { id: m.sessionID } })
-          } catch {
-            // Session may already be gone
-          }
+      for (const sid of activeSessionIDs) {
+        try {
+          await client.session.delete({ path: { id: sid } })
+        } catch {
+          // Session may already be gone
         }
       }
 

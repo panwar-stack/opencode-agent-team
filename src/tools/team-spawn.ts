@@ -30,13 +30,27 @@ export function teamSpawnTool(client: any) {
       if (!team) throw new Error("No active team found. Create a team first with team_create.")
 
       const planMode = params.plan_mode ?? false
-      const dependencyIDs = params.depends_on || params.wait_for || null
+      const dependencyIDs = (() => {
+        const both = [...(params.depends_on || []), ...(params.wait_for || [])]
+        return both.length > 0 ? [...new Set(both)] : null
+      })()
+
+      if (dependencyIDs) {
+        const members = await getTeamMembers(team.id)
+        for (const depID of dependencyIDs) {
+          const match = members.find(m => m.sessionID === depID || m.name === depID || m.id === depID)
+          if (!match) {
+            throw new Error(`Unknown dependency: "${depID}" — no teammate member matches this name, session ID, or member ID`)
+          }
+        }
+      }
 
       let childSession: any
       try {
         const body: any = {
           title: `${params.name} (${params.agent_type})`,
           parentID: sessionID,
+          agent: params.agent_type,
         }
 
         // Inherit permissions from lead session
@@ -53,10 +67,10 @@ export function teamSpawnTool(client: any) {
             ...(body.permission || {}),
             deny: [
               ...(body.permission?.deny || []),
-              { permission: "bash", action: "deny" },
-              { permission: "write", action: "deny" },
-              { permission: "edit", action: "deny" },
-              { permission: "apply_patch", action: "deny" },
+              { ruleset: "*", permission: "bash", action: "deny" },
+              { ruleset: "*", permission: "write", action: "deny" },
+              { ruleset: "*", permission: "edit", action: "deny" },
+              { ruleset: "*", permission: "apply_patch", action: "deny" },
             ],
           }
         }

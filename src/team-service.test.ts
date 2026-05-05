@@ -1367,9 +1367,9 @@ describe("resolveRecipients", () => {
     expect(result).not.toContain(leadSessionID)
   })
 
-  it("passes through unknown recipients", () => {
-    const result = resolveRecipients("unknown-recipient", members, senderSessionID, leadSessionID)
-    expect(result).toEqual(["unknown-recipient"])
+  it("throws on unknown recipients", () => {
+    expect(() => resolveRecipients("unknown-recipient", members, senderSessionID, leadSessionID))
+      .toThrow('Unknown recipient(s): unknown-recipient. Recipients must be a member name, session ID, or "lead".')
   })
 
   it("returns empty array when all recipients are the sender", () => {

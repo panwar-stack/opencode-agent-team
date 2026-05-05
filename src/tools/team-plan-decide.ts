@@ -12,7 +12,7 @@ export function teamPlanDecideTool(client: any) {
       const { sessionID } = context
       const params = args as { member_name: string; decision: string; feedback?: string }
 
-      const { getActiveTeamForLead, getTeamMembers, updateMemberStatus, sendMessage } = await import("../team-service.js")
+      const { getActiveTeamForLead, getTeamMembers, updateMemberStatus, setMemberPlanMode, sendMessage } = await import("../team-service.js")
 
       const team = await getActiveTeamForLead(sessionID)
       if (!team) throw new Error("No active team found. Only the team lead can approve/reject plans.")
@@ -23,6 +23,17 @@ export function teamPlanDecideTool(client: any) {
 
       if (params.decision === "approve") {
         await updateMemberStatus(member.id, "active")
+        await setMemberPlanMode(member.id, false)
+
+        try {
+          const leadSession = await client.session.get({ path: { id: sessionID } })
+          if (leadSession?.data?.permission) {
+            await client.session.update({
+              body: { permission: leadSession.data.permission },
+              path: { id: member.sessionID },
+            })
+          }
+        } catch { /* ignore if unavailable */ }
 
         await sendMessage({
           teamID: team.id,

@@ -259,7 +259,6 @@ ${summary}
           if (!stillBlocked) {
             await updateMemberStatus(bm.id, "starting")
 
-            // Gap 7: Toast for unblocked member
             if (client.tui?.showToast) {
               client.tui.showToast({ body: { variant: "info", title: "Team", message: `Teammate ${bm.name} is now unblocked.` } })
             }
@@ -271,19 +270,54 @@ ${summary}
               body: `Teammate **${bm.name}** is now unblocked and ready. All their dependencies are completed.`,
             })
 
-            // Gap 3: Cascade auto-start
+            const allMembersForDepResults = await getTeamMembers(team.id)
+            const depResults: string[] = []
+            if (bm.dependencyIDs) {
+              for (const depID of bm.dependencyIDs) {
+                const depMember = allMembersForDepResults.find(m => m.sessionID === depID || m.name === depID || m.id === depID)
+                if (depMember && depMember.status === "completed" && depMember.result) {
+                  depResults.push(`**${depMember.name}** completed: ${depMember.result}`)
+                }
+              }
+            }
+
+            const systemPrompt = generateTeammateSystemPrompt({
+              name: bm.name,
+              teamName: team.name,
+              teamGoal: team.goal,
+              leadSessionID: team.leadSessionID,
+              memberSessionID: bm.sessionID,
+              teamID: team.id,
+              rolePrompt: bm.rolePrompt,
+              planMode: bm.planMode,
+              dependencyResults: depResults.length > 0 ? depResults : undefined,
+            })
+
             try {
               await client.session.prompt({
                 body: {
                   noReply: true,
+                  parts: [{ type: "text", text: `<system>\n${systemPrompt}\n</system>` }],
+                },
+                path: { id: bm.sessionID },
+              })
+
+              await client.session.prompt({
+                body: {
                   parts: [{
                     type: "text",
-                    text: `<team-messages>\nYou are now unblocked! All your dependencies have completed. Begin working on your assigned task.\n</team-messages>`,
+                    text: bm.rolePrompt,
                   }],
+                  tools: {
+                    task: false,
+                    todowrite: true,
+                  },
                 },
                 path: { id: bm.sessionID },
               })
             } catch { /* ignore */ }
+
+            await updateMemberStatus(bm.id, "active")
           }
         }
       }

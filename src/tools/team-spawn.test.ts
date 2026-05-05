@@ -92,7 +92,9 @@ describe("teamSpawnTool", () => {
   it("blocked path — returns blocked status when dependencies not satisfied", async () => {
     const team = { id: "team-1", name: "test-team", goal: "goals", leadSessionID: "lead-session-1", status: "active" }
     mockGetActiveTeamForLead.mockResolvedValue(team)
-    mockGetTeamMembers.mockResolvedValue([])
+    mockGetTeamMembers.mockResolvedValue([
+      { id: "dep-1", sessionID: "dep-session-1", name: "dep-1", status: "active" },
+    ])
     mockAddMember.mockResolvedValue({ memberID: "member-2", sessionID: "child-session-2", dependencyIDs: ["dep-1"] })
     mockIsMemberBlocked.mockResolvedValue(true)
     mockGetTeamState.mockResolvedValue({ members: [{ id: "member-2", name: "test-agent", sessionID: "child-session-2", dependencyIDs: ["dep-1"], status: "starting", planMode: false }] })
@@ -131,10 +133,10 @@ describe("teamSpawnTool", () => {
     const createCallArgs = (client.session.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
     expect(createCallArgs.body.permission.deny).toEqual(
       expect.arrayContaining([
-        { permission: "bash", action: "deny" },
-        { permission: "write", action: "deny" },
-        { permission: "edit", action: "deny" },
-        { permission: "apply_patch", action: "deny" },
+        { ruleset: "*", permission: "bash", action: "deny" },
+        { ruleset: "*", permission: "write", action: "deny" },
+        { ruleset: "*", permission: "edit", action: "deny" },
+        { ruleset: "*", permission: "apply_patch", action: "deny" },
       ]),
     )
   })
@@ -172,7 +174,9 @@ describe("teamSpawnTool", () => {
   it("uses wait_for as alias for depends_on", async () => {
     const team = { id: "team-1", name: "test-team", goal: "goals", leadSessionID: "lead-session-1", status: "active" }
     mockGetActiveTeamForLead.mockResolvedValue(team)
-    mockGetTeamMembers.mockResolvedValue([])
+    mockGetTeamMembers.mockResolvedValue([
+      { id: "dep-wf", sessionID: "dep-wf-session", name: "dep-wf", status: "active" },
+    ])
     mockAddMember.mockResolvedValue({ memberID: "member-5", sessionID: "child-session-5", dependencyIDs: ["dep-wf"] })
     mockIsMemberBlocked.mockResolvedValue(false)
     mockGetTeamState.mockResolvedValue({ members: [{ id: "member-5", name: "wf-agent", sessionID: "child-session-5", dependencyIDs: ["dep-wf"], status: "starting", planMode: false }] })

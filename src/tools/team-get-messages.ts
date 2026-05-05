@@ -1,6 +1,6 @@
 import { tool } from "@opencode-ai/plugin"
 
-const pollingGuards = new Map<string, number>()
+const pollingGuards = new Map<string, { count: number; lastCheck: number }>()
 
 export function teamGetMessagesTool(client: any) {
   return tool({
@@ -27,11 +27,20 @@ export function teamGetMessagesTool(client: any) {
       const messages = await getMessagesForRecipient(teamID, sessionID)
 
       if (messages.length === 0) {
-        const count = pollingGuards.get(sessionID) || 0
-        pollingGuards.set(sessionID, count + 1)
+        const guard = pollingGuards.get(sessionID)
+        const now = Date.now()
+        const isNewTurn = !guard || (now - guard.lastCheck > 10_000)
 
-        if (count >= 1) {
-          return `Polling Blocked: No messages. You've checked ${count + 1} times. Wait for teammates to send you messages — they will wake you. Do not call team_get_messages again in this turn.`
+        if (isNewTurn) {
+          pollingGuards.set(sessionID, { count: 1, lastCheck: now })
+          return "No pending messages."
+        }
+
+        const newCount = guard.count + 1
+        pollingGuards.set(sessionID, { count: newCount, lastCheck: now })
+
+        if (guard.count >= 1) {
+          return `Polling Blocked: No messages. You've checked ${newCount} times. Wait for teammates to send you messages — they will wake you. Do not call team_get_messages again in this turn.`
         }
 
         return "No pending messages."
