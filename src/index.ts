@@ -161,7 +161,7 @@ ${summary}
       const member = memberResult.member
 
       // Handle idle (session finished work)
-      if (statusType === "idle" && member.status === "active") {
+      if (statusType === "idle" && member.status === "active" && !member.planMode) {
         let resultText = ""
         try {
           const msgs: any = await client.session.messages({ path: { id: sessionID } })
@@ -195,7 +195,6 @@ ${summary}
         try {
           await client.session.prompt({
             body: {
-              noReply: true,
               parts: [{
                 type: "text",
                 text: `<team-messages>\nTeammate **${member.name}** has completed their work. Check their output and decide next steps.\n</team-messages>`,
@@ -249,18 +248,10 @@ ${summary}
             try {
               await client.session.prompt({
                 body: {
-                  noReply: true,
-                  parts: [{ type: "text", text: `<system>\n${systemPrompt}\n</system>` }],
-                },
-                path: { id: bm.sessionID },
-              })
-
-              await client.session.prompt({
-                body: {
-                  parts: [{
-                    type: "text",
-                    text: bm.rolePrompt,
-                  }],
+                  parts: [
+                    { type: "text", text: `<system>\n${systemPrompt}\n</system>` },
+                    { type: "text", text: bm.rolePrompt },
+                  ],
                   tools: {
                     task: false,
                     todowrite: true,

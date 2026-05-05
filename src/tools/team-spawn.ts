@@ -148,6 +148,7 @@ export function teamSpawnTool(client: any) {
       // Fire-and-forget: combine system and role prompt into a single prompt call
       client.session.prompt({
         body: {
+          agent: params.agent_type,
           parts: [
             { type: "text", text: `<system>\n${systemPrompt}\n</system>` },
             { type: "text", text: params.role_prompt },

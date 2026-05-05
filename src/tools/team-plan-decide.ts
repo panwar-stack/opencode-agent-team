@@ -22,7 +22,7 @@ export function teamPlanDecideTool(client: any) {
       if (!member) throw new Error(`No teammate found with name "${params.member_name}"`)
 
       if (params.decision === "approve") {
-        await updateMemberStatus(member.id, "active")
+        await updateMemberStatus(member.id, "starting")
         await setMemberPlanMode(member.id, false)
 
         try {
@@ -53,11 +53,11 @@ export function teamPlanDecideTool(client: any) {
         try {
           await client.session.prompt({
             body: {
-              noReply: true,
               parts: [{
                 type: "text",
-                text: `<team-messages>\nYour plan was **approved** by the lead! ${params.feedback ? `Feedback: ${params.feedback}` : ""} You may now proceed with implementation.\n</team-messages>`,
+                text: `Your plan was approved! ${params.feedback ? `Feedback: ${params.feedback}` : ""} You may now proceed with implementation.`,
               }],
+              tools: { task: false, todowrite: true },
             },
             path: { id: member.sessionID },
           })
@@ -76,11 +76,11 @@ export function teamPlanDecideTool(client: any) {
         try {
           await client.session.prompt({
             body: {
-              noReply: true,
               parts: [{
                 type: "text",
-                text: `<team-messages>\nYour plan was **rejected** by the lead. ${params.feedback ? `Feedback: ${params.feedback}` : ""} Revise your plan and re-submit via team_plan_submit.\n</team-messages>`,
+                text: `Your plan was rejected by the lead. ${params.feedback ? `Feedback: ${params.feedback}` : ""} Revise your plan and re-submit via team_plan_submit.`,
               }],
+              tools: { task: false, todowrite: true },
             },
             path: { id: member.sessionID },
           })

@@ -1,5 +1,5 @@
 import type { Team, TeamMember, TeamTask, TeamMessage, MessageRecipientStatus, TeamID, MemberID, TaskID, MessageID, MemberStatus, WorkMode, DeliveryStatus } from "./types.js"
-import { generateID, getTeamState, saveTeamState, getTeamByLeadSession, getTeamByMemberSession, getPendingMessages, markMessageDelivered, markAllMessagesDelivered, loadDB, saveDB } from "./db.js"
+import { generateID, getTeamState, saveTeamState, withTeamState, getTeamByLeadSession, getTeamByMemberSession, getPendingMessages, markMessageDelivered, markAllMessagesDelivered, loadDB, saveDB } from "./db.js"
 
 // === Team Operations ===
 
@@ -42,20 +42,17 @@ export async function getTeamForMember(sessionID: string): Promise<Team | null> 
 }
 
 export async function shutdownTeam(teamID: TeamID): Promise<void> {
-  const state = await getTeamState(teamID)
-  if (!state) throw new Error("Team not found")
+  return withTeamState(teamID, async (state) => {
+    state.team.status = "closed"
+    state.team.timeUpdated = Date.now()
 
-  state.team.status = "closed"
-  state.team.timeUpdated = Date.now()
-
-  for (const member of state.members) {
-    if (member.status !== "completed" && member.status !== "cancelled") {
-      member.status = "cancelled"
-      member.timeUpdated = Date.now()
+    for (const member of state.members) {
+      if (member.status !== "completed" && member.status !== "cancelled") {
+        member.status = "cancelled"
+        member.timeUpdated = Date.now()
+      }
     }
-  }
-
-  await saveTeamState(state)
+  })
 }
 
 // === Member Operations ===
@@ -71,32 +68,30 @@ export async function addMember(params: {
   dependencyIDs: string[] | null
   model: { providerID: string; modelID: string } | null
 }): Promise<{ memberID: MemberID; sessionID: string; dependencyIDs: string[] | null }> {
-  const state = await getTeamState(params.teamID)
-  if (!state) throw new Error("Team not found")
+  return withTeamState(params.teamID, async (state) => {
+    const id = generateID()
+    const now = Date.now()
+    const member: TeamMember = {
+      id,
+      teamID: params.teamID,
+      sessionID: params.sessionID,
+      name: params.name,
+      agentType: params.agentType,
+      model: params.model,
+      rolePrompt: params.rolePrompt,
+      status: "starting",
+      planMode: params.planMode,
+      workMode: params.workMode,
+      dependencyIDs: params.dependencyIDs,
+      result: null,
+      timeCreated: now,
+      timeUpdated: now,
+    }
 
-  const id = generateID()
-  const now = Date.now()
-  const member: TeamMember = {
-    id,
-    teamID: params.teamID,
-    sessionID: params.sessionID,
-    name: params.name,
-    agentType: params.agentType,
-    model: params.model,
-    rolePrompt: params.rolePrompt,
-    status: "starting",
-    planMode: params.planMode,
-    workMode: params.workMode,
-    dependencyIDs: params.dependencyIDs,
-    result: null,
-    timeCreated: now,
-    timeUpdated: now,
-  }
+    state.members.push(member)
 
-  state.members.push(member)
-  await saveTeamState(state)
-
-  return { memberID: id, sessionID: params.sessionID, dependencyIDs: params.dependencyIDs }
+    return { memberID: id, sessionID: params.sessionID, dependencyIDs: params.dependencyIDs }
+  })
 }
 
 export async function getMember(memberID: MemberID): Promise<TeamMember | null> {
@@ -121,13 +116,14 @@ export async function getMemberBySession(sessionID: string): Promise<{ member: T
 export async function updateMemberStatus(memberID: MemberID, status: MemberStatus, result?: string): Promise<{ member: TeamMember; team: Team } | null> {
   const db = await loadDB()
   for (const state of Object.values(db.teams)) {
-    const member = state.members.find(m => m.id === memberID)
-    if (member) {
-      member.status = status
-      member.timeUpdated = Date.now()
-      if (result !== undefined) member.result = result
-      await saveTeamState(state)
-      return { member, team: state.team }
+    if (state.members.some(m => m.id === memberID)) {
+      return withTeamState(state.team.id, async (lockedState) => {
+        const member = lockedState.members.find(m => m.id === memberID)!
+        member.status = status
+        member.timeUpdated = Date.now()
+        if (result !== undefined) member.result = result
+        return { member, team: lockedState.team }
+      })
     }
   }
   return null
@@ -156,12 +152,13 @@ export async function isMemberBlocked(member: TeamMember): Promise<boolean> {
 export async function setMemberPlanMode(memberID: MemberID, planMode: boolean): Promise<{ member: TeamMember; team: Team } | null> {
   const db = await loadDB()
   for (const state of Object.values(db.teams)) {
-    const member = state.members.find(m => m.id === memberID)
-    if (member) {
-      member.planMode = planMode
-      member.timeUpdated = Date.now()
-      await saveTeamState(state)
-      return { member, team: state.team }
+    if (state.members.some(m => m.id === memberID)) {
+      return withTeamState(state.team.id, async (lockedState) => {
+        const member = lockedState.members.find(m => m.id === memberID)!
+        member.planMode = planMode
+        member.timeUpdated = Date.now()
+        return { member, team: lockedState.team }
+      })
     }
   }
   return null
@@ -191,38 +188,36 @@ export async function sendMessage(params: {
   recipients: string[]
   body: string
 }): Promise<{ messageID: MessageID }> {
-  const state = await getTeamState(params.teamID)
-  if (!state) throw new Error("Team not found")
+  return withTeamState(params.teamID, async (state) => {
+    const id = generateID()
+    const now = Date.now()
 
-  const id = generateID()
-  const now = Date.now()
+    const recipientStatuses: MessageRecipientStatus[] = params.recipients.map(r => ({
+      id: generateID(),
+      messageID: id,
+      teamID: params.teamID,
+      recipient: r,
+      deliveryStatus: "pending" as DeliveryStatus,
+      timeCreated: now,
+      timeUpdated: now,
+    }))
 
-  const recipientStatuses: MessageRecipientStatus[] = params.recipients.map(r => ({
-    id: generateID(),
-    messageID: id,
-    teamID: params.teamID,
-    recipient: r,
-    deliveryStatus: "pending" as DeliveryStatus,
-    timeCreated: now,
-    timeUpdated: now,
-  }))
+    const message: TeamMessage = {
+      id,
+      teamID: params.teamID,
+      sender: params.sender,
+      recipients: params.recipients,
+      body: params.body,
+      deliveryStatus: "pending",
+      recipientStatuses,
+      timeCreated: now,
+      timeUpdated: now,
+    }
 
-  const message: TeamMessage = {
-    id,
-    teamID: params.teamID,
-    sender: params.sender,
-    recipients: params.recipients,
-    body: params.body,
-    deliveryStatus: "pending",
-    recipientStatuses,
-    timeCreated: now,
-    timeUpdated: now,
-  }
+    state.messages.push(message)
 
-  state.messages.push(message)
-  await saveTeamState(state)
-
-  return { messageID: id }
+    return { messageID: id }
+  })
 }
 
 export async function getMessagesForRecipient(teamID: TeamID, recipient: string): Promise<TeamMessage[]> {
@@ -237,27 +232,25 @@ export async function createTask(params: {
   assignee?: string
   dependencyIDs?: string[]
 }): Promise<{ taskID: TaskID }> {
-  const state = await getTeamState(params.teamID)
-  if (!state) throw new Error("Team not found")
+  return withTeamState(params.teamID, async (state) => {
+    const id = generateID()
+    const now = Date.now()
+    const task: TeamTask = {
+      id,
+      teamID: params.teamID,
+      description: params.description,
+      status: "pending",
+      assignee: params.assignee ?? null,
+      dependencyIDs: params.dependencyIDs ?? null,
+      metadata: null,
+      timeCreated: now,
+      timeUpdated: now,
+    }
 
-  const id = generateID()
-  const now = Date.now()
-  const task: TeamTask = {
-    id,
-    teamID: params.teamID,
-    description: params.description,
-    status: "pending",
-    assignee: params.assignee ?? null,
-    dependencyIDs: params.dependencyIDs ?? null,
-    metadata: null,
-    timeCreated: now,
-    timeUpdated: now,
-  }
+    state.tasks.push(task)
 
-  state.tasks.push(task)
-  await saveTeamState(state)
-
-  return { taskID: id }
+    return { taskID: id }
+  })
 }
 
 export async function getTeamTasks(teamID: TeamID): Promise<TeamTask[]> {
@@ -268,25 +261,27 @@ export async function getTeamTasks(teamID: TeamID): Promise<TeamTask[]> {
 export async function claimTask(taskID: TaskID, claimantSessionID: string): Promise<TeamTask> {
   const db = await loadDB()
   for (const state of Object.values(db.teams)) {
-    const task = state.tasks.find(t => t.id === taskID)
-    if (!task) continue
+    if (state.tasks.some(t => t.id === taskID)) {
+      return withTeamState(state.team.id, async (lockedState) => {
+        const task = lockedState.tasks.find(t => t.id === taskID)!
 
-    if (task.status !== "pending") throw new Error("Task is not pending")
+        if (task.status !== "pending") throw new Error("Task is not pending")
 
-    if (task.dependencyIDs) {
-      for (const depID of task.dependencyIDs) {
-        const depTask = state.tasks.find(t => t.id === depID)
-        if (depTask && depTask.status !== "completed" && depTask.status !== "cancelled") {
-          throw new Error(`Dependency task ${depID} is not completed`)
+        if (task.dependencyIDs) {
+          for (const depID of task.dependencyIDs) {
+            const depTask = lockedState.tasks.find(t => t.id === depID)
+            if (depTask && depTask.status !== "completed" && depTask.status !== "cancelled") {
+              throw new Error(`Dependency task ${depID} is not completed`)
+            }
+          }
         }
-      }
-    }
 
-    task.status = "in_progress"
-    task.assignee = claimantSessionID
-    task.timeUpdated = Date.now()
-    await saveTeamState(state)
-    return task
+        task.status = "in_progress"
+        task.assignee = claimantSessionID
+        task.timeUpdated = Date.now()
+        return task
+      })
+    }
   }
   throw new Error("Task not found")
 }
@@ -294,14 +289,16 @@ export async function claimTask(taskID: TaskID, claimantSessionID: string): Prom
 export async function updateTask(taskID: TaskID, updates: { status?: "pending" | "in_progress" | "completed" | "cancelled"; assignee?: string }): Promise<TeamTask> {
   const db = await loadDB()
   for (const state of Object.values(db.teams)) {
-    const task = state.tasks.find(t => t.id === taskID)
-    if (!task) continue
+    if (state.tasks.some(t => t.id === taskID)) {
+      return withTeamState(state.team.id, async (lockedState) => {
+        const task = lockedState.tasks.find(t => t.id === taskID)!
 
-    if (updates.status) task.status = updates.status
-    if (updates.assignee !== undefined) task.assignee = updates.assignee
-    task.timeUpdated = Date.now()
-    await saveTeamState(state)
-    return task
+        if (updates.status) task.status = updates.status
+        if (updates.assignee !== undefined) task.assignee = updates.assignee
+        task.timeUpdated = Date.now()
+        return task
+      })
+    }
   }
   throw new Error("Task not found")
 }

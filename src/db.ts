@@ -73,6 +73,19 @@ async function saveTeamState(state: TeamState): Promise<void> {
   })
 }
 
+async function withTeamState<T>(teamID: TeamID, fn: (state: TeamState) => Promise<T>): Promise<T> {
+  return withLock(async () => {
+    const db = await _loadDB()
+    const state = db.teams[teamID]
+    if (!state) throw new Error("Team not found")
+    const result = await fn(state)
+    await _saveDB(db)
+    _dbCache = db
+    _dbCacheTime = Date.now()
+    return result
+  })
+}
+
 async function getTeamByLeadSession(leadSessionID: string): Promise<TeamState | null> {
   const db = await loadDB()
   for (const state of Object.values(db.teams)) {
@@ -165,6 +178,7 @@ export {
   saveDB,
   getTeamState,
   saveTeamState,
+  withTeamState,
   getTeamByLeadSession,
   getTeamByMemberSession,
   getPendingMessages,
